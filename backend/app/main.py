@@ -200,3 +200,20 @@ def add_chat_member(
         user_name=user_name,
     )
 
+@app.delete("/chats/{chat_id}/members/{user_id}")
+def remove_chat_member(chat_id: int, user_id: int, db: Session = Depends(get_db)):
+    # ищем запись участника
+    member = (
+        db.query(models.ChatMember)
+        .filter(
+            models.ChatMember.chat_id == chat_id,
+            models.ChatMember.user_id == user_id,
+        )
+        .first()
+    )
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found in this chat")
+
+    db.delete(member)
+    db.commit()
+    return {"ok": True}

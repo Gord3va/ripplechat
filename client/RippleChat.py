@@ -26,6 +26,10 @@ from kivymd.uix.card import MDCard
 
 from kivy.utils import get_color_from_hex
 
+from kivymd.uix.list import OneLineAvatarIconListItem, IconRightWidget
+from kivymd.uix.button import MDIconButton
+
+
 
 
 
@@ -290,9 +294,9 @@ class RippleChatScreen(MDScreen):
             from kivy.metrics import dp
             x = touch.x - instance.x
             if x < dp(56) or x > instance.width - dp(56):
-                # это клики по иконкам, их не трогаем
+                # клики по иконкам
                 return False
-            # середина панели — считаем, что это заголовок
+            # середина панели
             self.open_chat_info()
             return True
 
@@ -662,6 +666,8 @@ class ChatMembersScreen(MDScreen):
         super().__init__(**kwargs)
 
         self.chat_id: int | None = None
+        self._remove_dialog = None
+        self._user_to_remove: int | None = None
 
         root = MDBoxLayout(orientation="vertical")
 
@@ -718,8 +724,80 @@ class ChatMembersScreen(MDScreen):
 
         self.members_list.clear_widgets()
         for m in members:
-            item = OneLineListItem(text=m["user_name"])
+            user_id = m["user_id"]
+            user_name = m["user_name"]
+
+            item = OneLineAvatarIconListItem(text=user_name)
+            item.user_id = user_id
+
+            trash = IconRightWidget(
+                icon="delete",
+                theme_text_color="Custom",
+                text_color=(1, 0, 0, 1),
+                on_release=lambda btn, it=item: self._confirm_remove_member(it),
+            )
+
+            item.add_widget(trash)
             self.members_list.add_widget(item)
+
+    def _confirm_remove_member(self, item):
+        self._user_to_remove = getattr(item, "user_id", None)
+        if self._user_to_remove is None:
+            return
+
+        if self._remove_dialog is not None:
+            self._remove_dialog.dismiss()
+
+        self._remove_dialog = MDDialog(
+            title="Удалить участника",
+            text=f"Удалить {item.text} из чата?",
+            buttons=[
+                MDFlatButton(
+                    text="Отмена",
+                    on_release=lambda x: self._remove_dialog.dismiss() if self._remove_dialog else None,
+                ),
+                MDFlatButton(
+                    text="Удалить",
+                    text_color=(1, 0, 0, 1),
+                    on_release=lambda x: self._do_remove_member(),
+                ),
+            ],
+        )
+        self._remove_dialog.open()
+
+    def _do_remove_member(self):
+        if self.chat_id is None or self._user_to_remove is None:
+            if self._remove_dialog:
+                self._remove_dialog.dismiss()
+            return
+
+        app = MDApp.get_running_app()
+        if app is None:
+            return
+        app = cast(RippleChatApp, app)
+
+        headers = {"Authorization": f"Bearer {app.api_token}"}
+
+        try:
+            resp = requests.delete(
+                f"{API_BASE_URL}/chats/{self.chat_id}/members/{self._user_to_remove}",
+                headers=headers,
+                timeout=5,
+            )
+            print("REMOVE MEMBER status:", resp.status_code, resp.text)
+            resp.raise_for_status()
+        except Exception as e:
+            print("Ошибка удаления участника:", e)
+        else:
+            # просто дергаем уже существующий экран со списком чатов
+            app.chat_list_screen.load_chats()
+        finally:
+            if self._remove_dialog:
+                self._remove_dialog.dismiss()
+
+        # обновляем список участников текущего чата
+        self.load_members()
+
 
 
 class RippleChatApp(MDApp):
