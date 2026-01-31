@@ -47,3 +47,12 @@ def create_chat(db: Session, title: str, member_user_ids: list[int]) -> models.C
     db.commit()
 
     return chat
+
+def get_chats_for_user(db: Session, user_id: int):
+    return (
+        db.query(models.Chat)
+        .join(models.ChatMember, models.ChatMember.chat_id == models.Chat.id)
+        .filter(models.ChatMember.user_id == user_id)
+        .all()
+    )
+
