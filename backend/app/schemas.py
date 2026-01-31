@@ -25,10 +25,30 @@ class ChatCreate(BaseModel):
     creator_id: int
 
 
-
 class ChatOut(BaseModel):
     id: int
     title: str
+
+    class Config:
+        orm_mode = True
+
+
+class ChatMemberAdd(BaseModel):
+    user_id: int
+
+
+class ChatMemberOut(BaseModel):
+    chat_id: int
+    user_id: int
+    user_name: str
+
+    class Config:
+        orm_mode = True
+
+
+class UserOut(BaseModel):
+    id: int
+    name: str
 
     class Config:
         orm_mode = True

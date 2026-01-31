@@ -15,9 +15,14 @@ import requests
 from kivymd.uix.dialog import MDDialog
 from kivymd.uix.button import MDFlatButton
 
+from kivymd.uix.list import OneLineListItem
+from kivy.uix.boxlayout import BoxLayout
+from kivymd.uix.scrollview import MDScrollView
 
 
-API_BASE_URL = "http://213.171.24.188:8000"  #   http://213.171.24.188:8000 http://127.0.0.1:8000
+
+
+API_BASE_URL = "http://127.0.0.1:8000"  #   http://213.171.24.188:8000   http://127.0.0.1:8000
 
 
 class LoginScreen(MDScreen):
@@ -192,7 +197,6 @@ class ChatListScreen(MDScreen):
             )
             self.chat_list.add_widget(item)
 
-
     def create_chat_dialog(self):
         self.dialog = MDDialog(
             title="Новый чат",
@@ -256,9 +260,11 @@ class RippleChatScreen(MDScreen):
         self.chat_id = chat_id
         self.chat_title = chat_title
         self.messages = []
+        self.add_user_dialog = None
 
         root = MDBoxLayout(orientation="vertical")
 
+        # Сначала создаём top_bar
         self.top_bar = MDTopAppBar(
             title=f"RippleChat · {self.chat_title}",
             elevation=4,
@@ -266,6 +272,10 @@ class RippleChatScreen(MDScreen):
             specific_text_color=(1, 1, 1, 1),
             left_action_items=[["arrow-left", lambda x: self.go_back()]],
         )
+        # Кнопка "добавить пользователя" справа
+        self.top_bar.right_action_items = [
+            ["account-plus", lambda x: self.open_add_user_dialog()],
+        ]
         root.add_widget(self.top_bar)
 
         self.scroll = MDScrollView()
@@ -307,6 +317,151 @@ class RippleChatScreen(MDScreen):
 
         Clock.schedule_interval(lambda dt: self.load_messages(), 3)
 
+    # ==== ДОБАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯ В ЧАТ ====
+
+    def open_add_user_dialog(self):
+        if self.chat_id is None:
+            return
+
+        app = MDApp.get_running_app()
+        if app is None:
+            return
+        app = cast(RippleChatApp, app)
+
+        headers = {"Authorization": f"Bearer {app.api_token}"}
+
+        # 1) Все пользователи
+        try:
+            resp_all = requests.get(
+                f"{API_BASE_URL}/users",
+                headers=headers,
+                timeout=5,
+            )
+            resp_all.raise_for_status()
+            all_users = resp_all.json()
+        except Exception as e:
+            print("Ошибка загрузки всех пользователей:", e)
+            return
+
+        # 2) Участники чата
+        try:
+            resp_members = requests.get(
+                f"{API_BASE_URL}/chats/{self.chat_id}/members",
+                headers=headers,
+                timeout=5,
+            )
+            resp_members.raise_for_status()
+            members = resp_members.json()
+        except Exception as e:
+            print("Ошибка загрузки участников чата:", e)
+            return
+
+        member_ids = {m["user_id"] for m in members}
+        available_users = [u for u in all_users if u["id"] not in member_ids]
+
+        print("ALL_USERS:", all_users)
+        print("MEMBERS:", members)
+        print("AVAILABLE_USERS:", available_users)
+
+        if not available_users:
+            print("Нет пользователей для добавления")
+            return
+
+        # 3) content_cls = сам MDList
+        lst = MDList()
+
+        def on_user_click(item):
+            user_id = item.user_id
+            self._add_user_to_chat_by_id(user_id)
+            if self.add_user_dialog is not None:
+                self.add_user_dialog.dismiss()
+
+        for u in available_users:
+            item = OneLineListItem(text=u["name"])
+            item.user_id = u["id"]
+            item.bind(on_release=on_user_click)
+            lst.add_widget(item)
+
+        if self.add_user_dialog is not None:
+            self.add_user_dialog.dismiss()
+
+        self.add_user_dialog = MDDialog(
+            title="Добавить пользователя",
+            type="custom",
+            content_cls=lst,
+            buttons=[
+                MDFlatButton(
+                    text="Отмена",
+                    on_release=lambda x: (
+                        self.add_user_dialog.dismiss()
+                        if self.add_user_dialog is not None
+                        else None
+                    ),
+                ),
+            ],
+        )
+
+        if self.add_user_dialog is not None:
+            self.add_user_dialog.open()
+
+    def _add_user_to_chat_by_id(self, user_id: int):
+        app = MDApp.get_running_app()
+        if app is None:
+            return
+        app = cast(RippleChatApp, app)
+
+        headers = {"Authorization": f"Bearer {app.api_token}"}
+        payload = {"user_id": user_id}
+
+        try:
+            resp = requests.post(
+                f"{API_BASE_URL}/chats/{self.chat_id}/members",
+                json=payload,
+                headers=headers,
+                timeout=5,
+            )
+            print("ADD MEMBER status:", resp.status_code, resp.text)
+            resp.raise_for_status()
+        except Exception as e:
+            print("Ошибка добавления пользователя в чат:", e)
+            return
+
+    def _add_user_to_chat(self):
+        text = self.add_user_field.text.strip()
+        if not text:
+            return
+        try:
+            user_id = int(text)
+        except ValueError:
+            print("Неверный ID пользователя")
+            return
+
+        if self.add_user_dialog is not None:
+            self.add_user_dialog.dismiss()
+
+        app = MDApp.get_running_app()
+        if app is None:
+            return
+        app = cast(RippleChatApp, app)
+
+        headers = {"Authorization": f"Bearer {app.api_token}"}
+        payload = {"user_id": user_id}
+
+        try:
+            resp = requests.post(
+                f"{API_BASE_URL}/chats/{self.chat_id}/members",
+                json=payload,
+                headers=headers,
+                timeout=5,
+            )
+            print("ADD MEMBER status:", resp.status_code, resp.text)
+            resp.raise_for_status()
+        except Exception as e:
+            print("Ошибка добавления пользователя в чат:", e)
+            return
+
+    # ==== ЛОГИКА ЧАТА ====
+
     def set_chat(self, chat_id, chat_title):
         self.chat_id = chat_id
         self.chat_title = chat_title
@@ -319,7 +474,6 @@ class RippleChatScreen(MDScreen):
             return
         app = cast(RippleChatApp, app)
         app.sm.current = "chat_list"
-
 
     def load_messages(self, *args):
         if self.chat_id is None:
@@ -351,8 +505,7 @@ class RippleChatScreen(MDScreen):
         except Exception as e:
             print("Ошибка загрузки сообщений:", e)
             return
-        
-            # ожидаем список словарей
+
         if not isinstance(data, list):
             print("Ожидал список сообщений, а пришло:", type(data), data)
             return
@@ -361,7 +514,6 @@ class RippleChatScreen(MDScreen):
         for msg in data:
             user_display = msg.get("user_name")
             if not user_display:
-                # простое правило: user_id 1 -> "Ира", 2 -> "Мама", 3 -> "Сева"
                 uid = msg["user_id"]
                 if uid == 1:
                     user_display = "Ира"
@@ -388,10 +540,9 @@ class RippleChatScreen(MDScreen):
             return
 
         app = MDApp.get_running_app()
-
         if app is None:
-                print("Нет запущенного приложения MDApp")
-                return
+            print("Нет запущенного приложения MDApp")
+            return
         app = cast(RippleChatApp, app)
 
         headers = {"Authorization": f"Bearer {app.api_token}"}

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .db import Base, engine, get_db
 from . import models, schemas, crud
 
+
 app = FastAPI(title="RippleChat API")
 
 # =======================
@@ -23,12 +24,10 @@ USERS = {
     "seva": {"id": 3, "password": "seva-pass"},
 }
 
-
 class Token(BaseModel):
     access_token: str
     token_type: str
     user_id: int
-
 
 @app.post("/login", response_model=Token)
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -38,13 +37,12 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Incorrect username or password",
         )
-    # в качестве токена используем username (упрощённый вариант, как в доках)[web:601]
+    # в качестве токена используем username (упрощённый вариант, как в доках)
     return {
         "access_token": form_data.username,
         "token_type": "bearer",
         "user_id": user["id"],
     }
-
 
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     # token == username
@@ -56,7 +54,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
             headers={"WWW-Authenticate": "Bearer"},
         )
     return user
-
 
 # =======================
 # Инициализация БД
@@ -86,7 +83,6 @@ def init_db():
             db.commit()
     finally:
         db.close()
-
 
 init_db()
 
@@ -149,4 +145,58 @@ def create_chat_endpoint(
     member_ids = [payload.creator_id]
     chat = crud.create_chat(db, title=payload.title, member_user_ids=member_ids)
     return chat
+
+
+# список всех пользователей
+@app.get("/users", response_model=list[schemas.UserOut])
+def list_users(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    users = crud.get_all_users(db)
+    return users
+
+
+# участники чата
+@app.get("/chats/{chat_id}/members", response_model=list[schemas.ChatMemberOut])
+def list_chat_members(
+    chat_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    members = crud.get_chat_members(db, chat_id)
+    return [
+        schemas.ChatMemberOut(
+            chat_id=m.chat_id,
+            user_id=m.user_id,
+            user_name=m.user_name,
+        )
+        for m in members
+    ]
+
+
+# добавление участника
+@app.post("/chats/{chat_id}/members", response_model=schemas.ChatMemberOut)
+def add_chat_member(
+    chat_id: int,
+    payload: schemas.ChatMemberAdd,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    member = crud.add_user_to_chat(db, chat_id, payload.user_id)
+    if member is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user = db.query(models.User).filter(models.User.id == payload.user_id).first()
+    if user is None:
+        # теоретически сюда не попадём, но для тайпчекера и надёжности
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user_name: str = str(user.name)
+
+    return schemas.ChatMemberOut(
+        chat_id=chat_id,
+        user_id=payload.user_id,
+        user_name=user_name,
+    )
 
