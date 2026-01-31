@@ -17,7 +17,7 @@ from kivymd.uix.button import MDFlatButton
 
 
 
-API_BASE_URL = "http://127.0.0.1:8000"  #   http://213.171.24.188:8000
+API_BASE_URL = "http://213.171.24.188:8000"  #   http://213.171.24.188:8000 http://127.0.0.1:8000
 
 
 class LoginScreen(MDScreen):
