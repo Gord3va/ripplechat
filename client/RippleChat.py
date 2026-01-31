@@ -1,3 +1,4 @@
+from typing import cast
 from kivymd.app import MDApp
 from kivymd.uix.screen import MDScreen
 from kivymd.uix.boxlayout import MDBoxLayout
@@ -14,7 +15,9 @@ import requests
 from kivymd.uix.dialog import MDDialog
 from kivymd.uix.button import MDFlatButton
 
-API_BASE_URL = "http://127.0.0.1:8000"  # http://213.171.24.188:8000
+
+
+API_BASE_URL = "http://213.171.24.188:8000"  #  http://127.0.0.1:8000
 
 
 class LoginScreen(MDScreen):
@@ -76,6 +79,8 @@ class LoginScreen(MDScreen):
                 data={"username": username, "password": password},
                 timeout=5,
             )
+            print("LOGIN status:", resp.status_code)
+            print("LOGIN text:", resp.text)
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
@@ -83,15 +88,31 @@ class LoginScreen(MDScreen):
             return
 
         app = MDApp.get_running_app()
+        if app is None:
+            print("Приложение MDApp ещё не запущено")
+            return
+        
+        app = cast(RippleChatApp, app)
+
         app.api_token = data["access_token"]
         app.current_user_id = data["user_id"]
         app.current_username = username
+
+        print("TOKEN SET:", app.api_token, "USER_ID:", app.current_user_id)
 
         app.chat_list_screen.load_chats()
         app.sm.current = "chat_list"
 
 
 class ChatListScreen(MDScreen):
+
+    def _do_logout(self, *args):
+        app = MDApp.get_running_app()
+        if app is None:
+            return
+        app = cast(RippleChatApp, app)
+        app.logout()
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -104,7 +125,7 @@ class ChatListScreen(MDScreen):
             specific_text_color=(1, 1, 1, 1),
         )
         top_bar.right_action_items = [
-            ["logout", lambda x: MDApp.get_running_app().logout()],
+            ["logout", self._do_logout],
             ["plus", lambda x: self.create_chat_dialog()],
         ]
         root.add_widget(top_bar)
@@ -126,6 +147,13 @@ class ChatListScreen(MDScreen):
 
     def load_chats(self):
         app = MDApp.get_running_app()
+        if app is None:
+            print("Нет запущенного приложения MDApp")
+            return
+
+        if not app.api_token or not app.current_user_id:
+            print("Нет токена или user_id")
+            return
         if not app.api_token or not app.current_user_id:
             print("Нет токена или user_id")
             return
@@ -193,6 +221,16 @@ class ChatListScreen(MDScreen):
         self.dialog.dismiss()
 
         app = MDApp.get_running_app()
+
+        if app is None:
+            print("Нет запущенного приложения MDApp")
+            return
+        app = cast(RippleChatApp, app)
+
+        if not app.api_token or app.current_user_id is None:
+            print("Нет токена или user_id при создании чата")
+            return
+
         headers = {"Authorization": f"Bearer {app.api_token}"}
         user_id = app.current_user_id
 
@@ -277,14 +315,28 @@ class RippleChatScreen(MDScreen):
 
     def go_back(self):
         app = MDApp.get_running_app()
+        if app is None:
+            return
+        app = cast(RippleChatApp, app)
         app.sm.current = "chat_list"
+
 
     def load_messages(self, *args):
         if self.chat_id is None:
             return
 
         app = MDApp.get_running_app()
+        if app is None:
+            print("Нет запущенного приложения MDApp")
+            return
+        app = cast(RippleChatApp, app)
+
+        if not app.api_token:
+            print("Нет токена при загрузке сообщений")
+            return
+
         headers = {"Authorization": f"Bearer {app.api_token}"}
+        print("HEADERS FOR MESSAGES:", headers)
 
         try:
             resp = requests.get(
@@ -292,6 +344,8 @@ class RippleChatScreen(MDScreen):
                 headers=headers,
                 timeout=5,
             )
+            print("MSG status:", resp.status_code)
+            print("MSG text:", resp.text)
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
@@ -319,6 +373,12 @@ class RippleChatScreen(MDScreen):
             return
 
         app = MDApp.get_running_app()
+
+        if app is None:
+                print("Нет запущенного приложения MDApp")
+                return
+        app = cast(RippleChatApp, app)
+
         headers = {"Authorization": f"Bearer {app.api_token}"}
         payload = {
             "user_id": app.current_user_id,
@@ -402,9 +462,10 @@ class RippleChatApp(MDApp):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.sm = ScreenManager(transition=NoTransition())
-        self.api_token = None
-        self.current_user_id = None
-        self.current_username = None
+        self.api_token: str | None = None
+        self.current_user_id: int | None = None
+        self.current_username: str | None = None
+        self.chat_list_screen: ChatListScreen
 
     def build(self):
         self.title = "RippleChat"
