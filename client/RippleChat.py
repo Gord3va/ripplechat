@@ -17,7 +17,7 @@ from kivymd.uix.button import MDFlatButton
 
 
 
-API_BASE_URL = "http://213.171.24.188:8000"  #  http://127.0.0.1:8000
+API_BASE_URL = "http://127.0.0.1:8000"  #   http://213.171.24.188:8000
 
 
 class LoginScreen(MDScreen):
@@ -351,17 +351,32 @@ class RippleChatScreen(MDScreen):
         except Exception as e:
             print("Ошибка загрузки сообщений:", e)
             return
+        
+            # ожидаем список словарей
+        if not isinstance(data, list):
+            print("Ожидал список сообщений, а пришло:", type(data), data)
+            return
 
         self.messages = []
-        for item in data:
-            user_name = item.get("user_name", f"User {item['user_id']}")
-            incoming = user_name != app.current_username
+        for msg in data:
+            user_display = msg.get("user_name")
+            if not user_display:
+                # простое правило: user_id 1 -> "Ира", 2 -> "Мама", 3 -> "Сева"
+                uid = msg["user_id"]
+                if uid == 1:
+                    user_display = "Ира"
+                elif uid == 2:
+                    user_display = "Мама"
+                elif uid == 3:
+                    user_display = "Сева"
+                else:
+                    user_display = f"User {uid}"
 
             self.messages.append(
                 {
-                    "text": item["text"],
-                    "user": user_name,
-                    "incoming": incoming,
+                    "text": msg["text"],
+                    "user": user_display,
+                    "incoming": msg["user_id"] != app.current_user_id,
                 }
             )
 

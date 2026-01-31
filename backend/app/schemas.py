@@ -13,6 +13,7 @@ class MessageOut(MessageBase):
     id: int
     chat_id: int
     user_id: int
+    text: str
     created_at: datetime
 
     class Config:

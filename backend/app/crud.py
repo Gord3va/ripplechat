@@ -14,14 +14,23 @@ def get_user_chats(db: Session, user_id: int):
 
 
 def get_chat_messages(db: Session, chat_id: int, limit: int = 50, offset: int = 0):
-    return (
-        db.query(models.Message)
+    q = (
+        db.query(models.Message, models.User.name.label("user_name"))
+        .join(models.User, models.User.id == models.Message.user_id)
         .filter(models.Message.chat_id == chat_id)
-        .order_by(desc(models.Message.created_at))
+        .order_by(models.Message.created_at.desc())
         .offset(offset)
         .limit(limit)
-        .all()
     )
+    rows = q.all()
+
+    result = []
+    for msg, user_name in rows:
+        # "подкладываем" атрибут, чтобы pydantic мог его прочитать через orm_mode
+        msg.user_name = user_name
+        result.append(msg)
+    return result
+
 
 
 def create_message(db: Session, chat_id: int, user_id: int, text: str):
