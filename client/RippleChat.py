@@ -19,6 +19,14 @@ from kivymd.uix.list import OneLineListItem
 from kivy.uix.boxlayout import BoxLayout
 from kivymd.uix.scrollview import MDScrollView
 
+from kivymd.uix.button import MDFlatButton
+from kivy.uix.anchorlayout import AnchorLayout
+
+from kivymd.uix.card import MDCard
+
+from kivy.utils import get_color_from_hex
+
+
 
 
 
@@ -264,18 +272,32 @@ class RippleChatScreen(MDScreen):
 
         root = MDBoxLayout(orientation="vertical")
 
-        # Сначала создаём top_bar
+        #  top_bar
         self.top_bar = MDTopAppBar(
-            title=f"RippleChat · {self.chat_title}",
+            title=self.chat_title,
             elevation=4,
             md_bg_color=(0.0, 0.48, 0.99, 1),
             specific_text_color=(1, 1, 1, 1),
             left_action_items=[["arrow-left", lambda x: self.go_back()]],
+            right_action_items=[["account-plus", lambda x: self.open_add_user_dialog()]],
         )
-        # Кнопка "добавить пользователя" справа
-        self.top_bar.right_action_items = [
-            ["account-plus", lambda x: self.open_add_user_dialog()],
-        ]
+
+        def _on_top_bar_touch(instance, touch):
+            # клик попал в область панели?
+            if not instance.collide_point(*touch.pos):
+                return False
+            # ширина стрелки слева и плюса справа ~ 48dp каждая
+            from kivy.metrics import dp
+            x = touch.x - instance.x
+            if x < dp(56) or x > instance.width - dp(56):
+                # это клики по иконкам, их не трогаем
+                return False
+            # середина панели — считаем, что это заголовок
+            self.open_chat_info()
+            return True
+
+        self.top_bar.bind(on_touch_up=_on_top_bar_touch)
+
         root.add_widget(self.top_bar)
 
         self.scroll = MDScrollView()
@@ -316,6 +338,16 @@ class RippleChatScreen(MDScreen):
         self.add_widget(root)
 
         Clock.schedule_interval(lambda dt: self.load_messages(), 3)
+
+    def open_chat_info(self):
+        if self.chat_id is None:
+            return
+        app = MDApp.get_running_app()
+        if app is None:
+            return
+        app = cast(RippleChatApp, app)
+        app.open_chat_members(self.chat_id, self.chat_title)
+
 
     # ==== ДОБАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯ В ЧАТ ====
 
@@ -465,8 +497,9 @@ class RippleChatScreen(MDScreen):
     def set_chat(self, chat_id, chat_title):
         self.chat_id = chat_id
         self.chat_title = chat_title
-        self.top_bar.title = f"RippleChat · {self.chat_title}"
+        self.top_bar.title = self.chat_title
         self.load_messages()
+
 
     def go_back(self):
         app = MDApp.get_running_app()
@@ -624,6 +657,71 @@ class RippleChatScreen(MDScreen):
             self.chat_list.add_widget(row)
 
 
+class ChatMembersScreen(MDScreen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        self.chat_id: int | None = None
+
+        root = MDBoxLayout(orientation="vertical")
+
+        self.top_bar = MDTopAppBar(
+            title="Участники",
+            elevation=4,
+            md_bg_color=(0.0, 0.48, 0.99, 1),
+            specific_text_color=(1, 1, 1, 1),
+            left_action_items=[["arrow-left", lambda x: self.go_back()]],
+        )
+        root.add_widget(self.top_bar)
+
+        scroll = MDScrollView()
+        self.members_list = MDList()
+        scroll.add_widget(self.members_list)
+        root.add_widget(scroll)
+
+        self.add_widget(root)
+
+    def set_chat(self, chat_id: int, chat_title: str):
+        self.chat_id = chat_id
+        self.top_bar.title = f"Участники · {chat_title}"
+        self.load_members()
+
+    def go_back(self):
+        app = MDApp.get_running_app()
+        if app is None:
+            return
+        app = cast(RippleChatApp, app)
+        app.sm.current = "chat"
+
+    def load_members(self):
+        if self.chat_id is None:
+            return
+
+        app = MDApp.get_running_app()
+        if app is None:
+            return
+        app = cast(RippleChatApp, app)
+
+        headers = {"Authorization": f"Bearer {app.api_token}"}
+
+        try:
+            resp = requests.get(
+                f"{API_BASE_URL}/chats/{self.chat_id}/members",
+                headers=headers,
+                timeout=5,
+            )
+            resp.raise_for_status()
+            members = resp.json()
+        except Exception as e:
+            print("Ошибка загрузки участников чата:", e)
+            return
+
+        self.members_list.clear_widgets()
+        for m in members:
+            item = OneLineListItem(text=m["user_name"])
+            self.members_list.add_widget(item)
+
+
 class RippleChatApp(MDApp):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -632,6 +730,8 @@ class RippleChatApp(MDApp):
         self.current_user_id: int | None = None
         self.current_username: str | None = None
         self.chat_list_screen: ChatListScreen
+        self.chat_screen: RippleChatScreen
+        self.chat_members_screen: ChatMembersScreen
 
     def build(self):
         self.title = "RippleChat"
@@ -640,10 +740,12 @@ class RippleChatApp(MDApp):
         self.login_screen = LoginScreen(name="login")
         self.chat_list_screen = ChatListScreen(name="chat_list")
         self.chat_screen = RippleChatScreen(name="chat", chat_id=1, chat_title="Семейный чат")
+        self.chat_members_screen = ChatMembersScreen(name="chat_members")  # ← создаём
 
         self.sm.add_widget(self.login_screen)
         self.sm.add_widget(self.chat_list_screen)
         self.sm.add_widget(self.chat_screen)
+        self.sm.add_widget(self.chat_members_screen)  # ← добавляем в менеджер
 
         self.sm.current = "login"
         return self.sm
@@ -660,6 +762,12 @@ class RippleChatApp(MDApp):
         self.chat_list_screen.chat_list.clear_widgets()
         self.chat_list_screen.current_user_label.text = "Вы: ?"
         self.sm.current = "login"
+
+    def open_chat_members(self, chat_id: int, chat_title: str):
+        self.chat_members_screen.set_chat(chat_id, chat_title)
+        self.sm.current = "chat_members"
+
+
 
 
 if __name__ == "__main__":
