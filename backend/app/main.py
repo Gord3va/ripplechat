@@ -9,6 +9,46 @@ from .db import Base, engine, get_db
 from . import models, schemas, crud
 
 
+from .security import hash_password
+
+from .db import SessionLocal
+
+from .security import verify_password
+
+from typing import cast
+from .models import User
+
+
+
+# # создаём все таблицы один раз при импорте приложения
+# Base.metadata.create_all(bind=engine)
+
+
+# def init_test_users():
+#     db = SessionLocal()
+#     try:
+#         if db.query(models.User).count() == 0:
+#             users = [
+#                 ("ira",   "Ира",   "ira"),
+#                 ("mama",  "Мама",  "mama"),
+#                 ("seva",  "Сева",  "seva"),
+#             ]
+#             for login, display_name, raw_password in users:
+#                 user = models.User(
+#                     name=login,
+#                     display_name=display_name,
+#                     hashed_password=hash_password(raw_password),
+#                 )
+#                 db.add(user)
+#             db.commit()
+#             print("== Created test users: ira, mama, seva ==")
+#     finally:
+#         db.close()
+
+# init_test_users()
+
+
+
 app = FastAPI(title="RippleChat API")
 
 # =======================
@@ -24,67 +64,78 @@ USERS = {
     "seva": {"id": 3, "password": "seva-pass"},
 }
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-    user_id: int
 
-@app.post("/login", response_model=Token)
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = USERS.get(form_data.username)
-    if not user or user["password"] != form_data.password:
+
+
+@app.post("/login", response_model=schemas.Token)
+async def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db),
+):
+    # ищем пользователя в БД по логину (name)
+    user = db.query(models.User).filter(models.User.name == form_data.username).first()
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Incorrect username or password",
         )
-    # в качестве токена используем username (упрощённый вариант, как в доках)
+
+    stored_hash = str(user.hashed_password)
+    if not verify_password(form_data.password, stored_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Incorrect username or password",
+        )
+
+    # упрощённо: токен = логин, как раньше
+    token = user.name
+
     return {
-        "access_token": form_data.username,
+        "access_token": token,
         "token_type": "bearer",
-        "user_id": user["id"],
+        "user_id": user.id,
     }
 
-async def get_current_user(token: str = Depends(oauth2_scheme)):
-    # token == username
-    user = USERS.get(token)
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+):
+    # token == name (логин пользователя)
+    user = db.query(models.User).filter(models.User.name == token).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return user
+    # возвращаем такой же словарь, как раньше USERS[token]
+    return {"id": user.id, "password": "", "name": user.name}
 
 # =======================
 # Инициализация БД
 # =======================
 
-def init_db():
-    Base.metadata.create_all(bind=engine)
+# def init_db():
+#     Base.metadata.create_all(bind=engine)
 
-    db = next(get_db())
-    try:
-        if not db.query(models.User).first():
-            ira = models.User(name="Ира")
-            mama = models.User(name="Мама")
-            seva = models.User(name="Сева")
-            db.add_all([ira, mama, seva])
-            db.commit()
+#     db = next(get_db())
+#     try:
+#         # блок с ira/mama/seva тут больше не нужен, он уже есть в init_test_users
+#         if not db.query(models.Chat).first():
+#             family_chat = models.Chat(title="Семейный чат", is_group=True)
+#             db.add(family_chat)
+#             db.commit()
+#             db.refresh(family_chat)
 
-        if not db.query(models.Chat).first():
-            family_chat = models.Chat(title="Семейный чат", is_group=True)
-            db.add(family_chat)
-            db.commit()
-            db.refresh(family_chat)
+#             users = db.query(models.User).all()
+#             for u in users:
+#                 db.add(models.ChatMember(chat_id=family_chat.id, user_id=u.id))
+#             db.commit()
+#     finally:
+#         db.close()
+# init_db()
 
-            users = db.query(models.User).all()
-            for u in users:
-                db.add(models.ChatMember(chat_id=family_chat.id, user_id=u.id))
-            db.commit()
-    finally:
-        db.close()
 
-init_db()
 
 # =======================
 # Эндпоинты
@@ -217,3 +268,74 @@ def remove_chat_member(chat_id: int, user_id: int, db: Session = Depends(get_db)
     db.delete(member)
     db.commit()
     return {"ok": True}
+
+@app.get("/users/{user_id}")
+def get_user(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "id": user.id,
+        "name": user.name,
+        "display_name": user.display_name or user.name,
+    }
+
+@app.put("/users/{user_id}")
+def update_user_profile(
+    user_id: int,
+    payload: schemas.UserProfileUpdate,
+    db: Session = Depends(get_db),
+):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user = cast(User, user)  # подсказываем типизатору, что это экземпляр, а не Column
+
+
+    if payload.display_name is not None and payload.display_name != "":
+        user.display_name = payload.display_name  # type: ignore[reportAttributeAccessIssue]
+
+    if payload.password is not None and payload.password != "":
+        user.hashed_password = hash_password(payload.password) # type: ignore[reportAttributeAccessIssue]
+
+
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "id": user.id,
+        "name": user.name,
+        "display_name": user.display_name or user.name,
+    }
+
+
+
+@app.post("/users/{user_id}/password")
+def change_password(
+    user_id: int,
+    payload: schemas.PasswordChange,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    if current_user["id"] != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    stored_hash = str(user.hashed_password)
+    if not verify_password(payload.old_password, stored_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Incorrect old password",
+        )
+
+    user.hashed_password = hash_password(payload.new_password)  # type: ignore[reportAttributeAccessIssue]
+
+    db.commit()
+    return {"ok": True}
+
+
+

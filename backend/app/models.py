@@ -10,6 +10,9 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True)
 
+    display_name = Column(String, nullable=True)            # отображаемый ник
+    hashed_password = Column(String, nullable=False) 
+
     messages = relationship("Message", back_populates="user")
     memberships = relationship("ChatMember", back_populates="user")
 

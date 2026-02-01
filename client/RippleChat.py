@@ -29,15 +29,14 @@ from kivy.utils import get_color_from_hex
 from kivymd.uix.list import OneLineAvatarIconListItem, IconRightWidget
 from kivymd.uix.button import MDIconButton
 
-
-
-
+from kivy.properties import BooleanProperty
+from kivymd.uix.button import MDRaisedButton
 
 
 API_BASE_URL = "http://127.0.0.1:8000"  #   http://213.171.24.188:8000   http://127.0.0.1:8000
 
 
-class LoginScreen(MDScreen):
+class LoginScreen(MDScreen): #авторизация
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -121,7 +120,7 @@ class LoginScreen(MDScreen):
         app.sm.current = "chat_list"
 
 
-class ChatListScreen(MDScreen):
+class ChatListScreen(MDScreen): #страница чатов
 
     def _do_logout(self, *args):
         app = MDApp.get_running_app()
@@ -140,10 +139,14 @@ class ChatListScreen(MDScreen):
             elevation=4,
             md_bg_color=(0.0, 0.48, 0.99, 1),
             specific_text_color=(1, 1, 1, 1),
+            
         )
         top_bar.right_action_items = [
             ["logout", self._do_logout],
             ["plus", lambda x: self.create_chat_dialog()],
+        ]
+        top_bar.left_action_items = [
+            ["account-circle", lambda x: self.open_profile()],
         ]
         root.add_widget(top_bar)
 
@@ -264,8 +267,15 @@ class ChatListScreen(MDScreen):
 
         self.load_chats()
 
+    def open_profile(self, *args):
+        app = MDApp.get_running_app()
+        if app is None:
+            return
+        app = cast(RippleChatApp, app)
+        app.open_profile_screen()
 
-class RippleChatScreen(MDScreen):
+
+class RippleChatScreen(MDScreen): #Чат
     def __init__(self, chat_id=None, chat_title="Чат", **kwargs):
         super().__init__(**kwargs)
 
@@ -661,7 +671,7 @@ class RippleChatScreen(MDScreen):
             self.chat_list.add_widget(row)
 
 
-class ChatMembersScreen(MDScreen):
+class ChatMembersScreen(MDScreen): #Участники чата
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -798,9 +808,183 @@ class ChatMembersScreen(MDScreen):
         # обновляем список участников текущего чата
         self.load_members()
 
+class ProfileScreen(MDScreen):  # Профиль
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        root = MDBoxLayout(orientation="vertical", padding=dp(16), spacing=dp(16))
+
+        top_bar = MDTopAppBar(
+            title="Профиль",
+            elevation=4,
+            md_bg_color=(0.0, 0.48, 0.99, 1),
+            specific_text_color=(1, 1, 1, 1),
+            left_action_items=[["arrow-left", lambda x: self.go_back()]],
+        )
+        root.add_widget(top_bar)
+
+        form = MDBoxLayout(
+            orientation="vertical",
+            spacing=dp(12),
+            padding=(0, dp(24), 0, 0),
+        )
+
+        self.nickname_field = MDTextField(
+            hint_text="Никнейм",
+            mode="rectangle",
+        )
+        self.password_field = MDTextField(
+            hint_text="Новый пароль",
+            mode="rectangle",
+            password=True,
+        )
+
+        # по умолчанию поля только для чтения
+        self.edit_mode = False
+        self._set_editable(False)
+
+        # КНОПКИ
+        self.edit_button = MDRaisedButton(
+            text="Редактировать",
+            on_release=lambda x: self.toggle_edit_mode(True),
+            md_bg_color=get_color_from_hex("#007BFF"),  # голубая кнопка
+            text_color=(1, 1, 1, 1),  # белый текст
+        )
+        self.save_button = MDRaisedButton(
+            text="Сохранить",
+            on_release=lambda x: self.save_profile(),
+            md_bg_color=get_color_from_hex("#007BFF"),  # голубая кнопка
+            text_color=(1, 1, 1, 1),  # белый текст
+        )
+
+        # по умолчанию показываем только "Редактировать"
+        self.save_button.opacity = 0
+        self.save_button.disabled = True
+
+        form.add_widget(self.nickname_field)
+        form.add_widget(self.password_field)
+        form.add_widget(self.edit_button)
+        form.add_widget(self.save_button)
+
+        root.add_widget(form)
+        self.add_widget(root)
+
+    def _set_editable(self, value: bool):
+        self.nickname_field.readonly = not value
+        self.password_field.readonly = not value
+
+    def on_pre_enter(self, *args):
+        self.load_profile()
+
+    def go_back(self):
+        # очищаем поле "Новый пароль"
+        self.password_field.text = ""
+
+        # выходим из режима редактирования (если он был включен)
+        if getattr(self, "edit_mode", False):
+            self.toggle_edit_mode(False)
+        app = MDApp.get_running_app()
+        if app is None:
+            return
+        app = cast(RippleChatApp, app)
+        app.sm.current = "chat_list"
+
+    def toggle_edit_mode(self, value: bool):
+        self.edit_mode = value
+        self._set_editable(self.edit_mode)
+
+        if self.edit_mode:
+            # показываем "Сохранить"
+            self.edit_button.opacity = 0
+            self.edit_button.disabled = True
+
+            self.save_button.opacity = 1
+            self.save_button.disabled = False
+        else:
+            # показываем "Редактировать"
+            self.edit_button.opacity = 1
+            self.edit_button.disabled = False
+
+            self.save_button.opacity = 0
+            self.save_button.disabled = True
+
+    def load_profile(self):
+        app = MDApp.get_running_app()
+        if app is None:
+            return
+        app = cast(RippleChatApp, app)
+        if not app.api_token or app.current_user_id is None:
+            return
 
 
-class RippleChatApp(MDApp):
+        headers = {"Authorization": f"Bearer {app.api_token}"}
+        try:
+            resp = requests.get(
+                f"{API_BASE_URL}/users/{app.current_user_id}",
+                headers=headers,
+                timeout=5,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            print("Ошибка загрузки профиля:", e)
+            return
+
+
+        self.nickname_field.text = data.get("display_name") or app.current_username or ""
+
+
+
+    def save_profile(self):
+        app = MDApp.get_running_app()
+        if app is None:
+            return
+        app = cast(RippleChatApp, app)
+        if not app.api_token or app.current_user_id is None:
+            return
+
+
+        new_display_name = self.nickname_field.text.strip()
+        new_password = self.password_field.text.strip()
+
+
+        payload: dict[str, str] = {}
+        if new_display_name:
+            payload["display_name"] = new_display_name
+        if new_password:
+            payload["password"] = new_password
+
+
+        if not payload:
+            print("Нет изменений для сохранения")
+            return
+
+
+        headers = {"Authorization": f"Bearer {app.api_token}"}
+        try:
+            resp = requests.put(
+                f"{API_BASE_URL}/users/{app.current_user_id}",
+                json=payload,
+                headers=headers,
+                timeout=5,
+            )
+            print("PROFILE UPDATE status:", resp.status_code, resp.text)
+            resp.raise_for_status()
+        except Exception as e:
+            print("Ошибка сохранения профиля:", e)
+            return
+        
+        # если ник сменился — обновим локально
+        if "display_name" in payload:
+            app.current_username = payload["display_name"]
+
+
+        # выключаем редактирование и очищаем поле пароля
+        self.password_field.text = ""
+        self.toggle_edit_mode(False)
+
+
+class RippleChatApp(MDApp): #приложение
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.sm = ScreenManager(transition=NoTransition())
@@ -810,6 +994,7 @@ class RippleChatApp(MDApp):
         self.chat_list_screen: ChatListScreen
         self.chat_screen: RippleChatScreen
         self.chat_members_screen: ChatMembersScreen
+        self.profile_screen: ProfileScreen
 
     def build(self):
         self.title = "RippleChat"
@@ -818,12 +1003,14 @@ class RippleChatApp(MDApp):
         self.login_screen = LoginScreen(name="login")
         self.chat_list_screen = ChatListScreen(name="chat_list")
         self.chat_screen = RippleChatScreen(name="chat", chat_id=1, chat_title="Семейный чат")
-        self.chat_members_screen = ChatMembersScreen(name="chat_members")  # ← создаём
+        self.chat_members_screen = ChatMembersScreen(name="chat_members") 
+        self.profile_screen = ProfileScreen(name="profile")
 
         self.sm.add_widget(self.login_screen)
         self.sm.add_widget(self.chat_list_screen)
         self.sm.add_widget(self.chat_screen)
-        self.sm.add_widget(self.chat_members_screen)  # ← добавляем в менеджер
+        self.sm.add_widget(self.chat_members_screen)  
+        self.sm.add_widget(self.profile_screen)
 
         self.sm.current = "login"
         return self.sm
@@ -845,6 +1032,9 @@ class RippleChatApp(MDApp):
         self.chat_members_screen.set_chat(chat_id, chat_title)
         self.sm.current = "chat_members"
 
+    def open_profile_screen(self):
+        self.profile_screen.load_profile()
+        self.sm.current = "profile"
 
 
 
